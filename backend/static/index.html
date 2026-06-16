@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>检测报告 AI 分析助手</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <style>
+    :root { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: #e8eaed; background: #0f1419; }
+    body { margin: 0; min-height: 100vh; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+    h1 { margin: 0 0 0.5rem; font-size: 1.6rem; }
+    .sub { color: #9ca3af; margin-bottom: 1.5rem; }
+    .panel { background: #1a2332; border: 1px solid #2d3a4f; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; }
+    label { display: block; margin-bottom: 1rem; font-size: 0.9rem; color: #cbd5e1; }
+    input, textarea { width: 100%; padding: 0.6rem; border-radius: 8px; border: 1px solid #374151; background: #0f1419; color: #fff; box-sizing: border-box; }
+    textarea { min-height: 110px; resize: vertical; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+    button { padding: 0.55rem 1rem; border-radius: 8px; border: 1px solid #4b5563; background: #243044; color: #e5e7eb; cursor: pointer; }
+    button.primary { background: #2563eb; border-color: #3b82f6; color: #fff; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    button.voice-active { border-color: #ef4444; background: #3b1c1c; animation: voice-pulse 1.5s ease-in-out infinite; }
+    @keyframes voice-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.35); }
+      50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+    }
+    .voice-hint {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin: 0.75rem 0 0;
+      font-size: 0.85rem;
+      color: #fca5a5;
+    }
+    .voice-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ef4444;
+      flex-shrink: 0;
+      animation: voice-blink 1s ease-in-out infinite;
+    }
+    @keyframes voice-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+    .error { background: #451a1a; color: #fecaca; padding: 0.75rem; border-radius: 8px; margin-top: 0.75rem; }
+    .muted { color: #9ca3af; }
+    .meta { font-size: 0.85rem; color: #9ca3af; margin-bottom: 1rem; }
+    details { margin-top: 1rem; font-size: 0.85rem; color: #9ca3af; }
+    code { background: #0f1419; padding: 0.1rem 0.3rem; border-radius: 4px; }
+
+    .section-title { margin: 0 0 1rem; font-size: 1.1rem; }
+    .headline { font-size: 1.05rem; color: #93c5fd; margin-bottom: 1rem; font-weight: 600; }
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
+    .kpi-card { background: #0f1419; border: 1px solid #374151; border-radius: 10px; padding: 1rem; text-align: center; }
+    .kpi-highlight { border-color: #3b82f6; background: linear-gradient(180deg, #1e3a5f 0%, #0f1419 100%); }
+    .kpi-value { font-size: 1.75rem; font-weight: 700; color: #60a5fa; line-height: 1.2; }
+    .kpi-highlight .kpi-value { font-size: 2rem; color: #38bdf8; }
+    .kpi-label { font-size: 0.8rem; color: #9ca3af; margin-top: 0.35rem; }
+    .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-bottom: 1.25rem; }
+    .chart-card { background: #0f1419; border: 1px solid #374151; border-radius: 10px; padding: 1rem; }
+    .chart-card h3 { margin: 0 0 0.75rem; font-size: 0.95rem; color: #e2e8f0; font-weight: 600; }
+    .chart-wrap { position: relative; height: 220px; }
+    #result { white-space: pre-wrap; line-height: 1.6; font-size: 0.92rem; color: #d1d5db; border-top: 1px solid #2d3a4f; padding-top: 1rem; }
+    .detail-label { font-size: 0.85rem; color: #9ca3af; margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>检测报告 AI 分析助手</h1>
+    <p class="sub">读取本地检测目录，结合大模型分析并以图表展示总体结果</p>
+
+    <div class="panel">
+      <label>检测报告目录
+        <input id="directory" type="text" value="D:\TestReport" />
+      </label>
+      <label>分析指令
+        <textarea id="instruction" placeholder="例如：分析所有检测文件，找出与某某客户相关的报告，汇总检测项目与通过率"></textarea>
+      </label>
+      <div class="actions">
+        <button type="button" id="voiceBtn">语音输入</button>
+        <button type="button" id="exampleBtn">填入示例</button>
+        <button type="button" id="analyzeBtn" class="primary">开始分析</button>
+      </div>
+      <div id="errorBox" class="error" style="display:none"></div>
+      <p id="voiceHint" class="voice-hint" style="display:none" role="status" aria-live="polite">
+        <span class="voice-dot" aria-hidden="true"></span>
+        <span id="voiceHintText"></span>
+      </p>
+    </div>
+
+    <div class="panel" id="resultPanel" style="display:none">
+      <h2 class="section-title">总体分析结果</h2>
+      <div class="meta" id="meta"></div>
+      <div class="headline" id="headline" style="display:none"></div>
+      <div class="kpi-row" id="kpiRow"></div>
+      <div id="chartsEmpty" class="muted" style="display:none">暂无图表数据，请查看下方文字结论。</div>
+      <div class="charts-grid" id="chartsGrid"></div>
+      <div class="detail-label">详细说明</div>
+      <div id="result"></div>
+      <details id="filesBox" style="display:none">
+        <summary>参与分析的文件列表</summary>
+        <ul id="fileList"></ul>
+      </details>
+    </div>
+
+    <div class="panel" id="placeholderPanel">
+      <p class="muted" id="status">提交指令后，总体指标与图表将显示在此处。</p>
+    </div>
+  </div>
+  <script src="/static/speech.js"></script>
+  <script src="/static/charts.js"></script>
+  <script>
+    const EXAMPLE = "分析所有检测文件，找出与「某某客户」相关的检测报告，汇总检测项目与通过率，并列出不合格项。";
+    const directoryEl = document.getElementById("directory");
+    const instructionEl = document.getElementById("instruction");
+    const errorBox = document.getElementById("errorBox");
+    const statusEl = document.getElementById("status");
+    const resultPanel = document.getElementById("resultPanel");
+    const placeholderPanel = document.getElementById("placeholderPanel");
+    const metaEl = document.getElementById("meta");
+    const filesBox = document.getElementById("filesBox");
+    const fileListEl = document.getElementById("fileList");
+    const analyzeBtn = document.getElementById("analyzeBtn");
+    const voiceBtn = document.getElementById("voiceBtn");
+    const voiceHint = document.getElementById("voiceHint");
+    const voiceHintText = document.getElementById("voiceHintText");
+
+    let voiceStatus = "idle";
+    let speechController = null;
+
+    function updateVoiceUi() {
+      voiceBtn.textContent = ReportSpeech.voiceStatusLabel(voiceStatus);
+      voiceBtn.classList.toggle("voice-active", voiceStatus === "listening" || voiceStatus === "starting");
+      voiceBtn.disabled = voiceStatus === "starting" || voiceStatus === "stopping";
+      const hint = ReportSpeech.voiceStatusHint(voiceStatus);
+      voiceHint.style.display = hint ? "flex" : "none";
+      voiceHintText.textContent = hint || "";
+    }
+
+    speechController = new ReportSpeech.SpeechInputController({
+      onTextChange: (text) => { instructionEl.value = text; },
+      onStatusChange: (status) => {
+        voiceStatus = status;
+        updateVoiceUi();
+      },
+      onError: (message) => showError(message || ""),
+    });
+    updateVoiceUi();
+
+    fetch("/api/config").then(r => r.json()).then(d => {
+      if (d.default_directory) directoryEl.value = d.default_directory;
+    }).catch(() => {});
+
+    document.getElementById("exampleBtn").onclick = () => { instructionEl.value = EXAMPLE; };
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.style.display = msg ? "block" : "none";
+    }
+
+    analyzeBtn.onclick = async () => {
+      const instruction = instructionEl.value.trim();
+      if (!instruction) { showError("请输入或通过语音说出分析指令。"); return; }
+      showError("");
+      analyzeBtn.disabled = true;
+      statusEl.textContent = "正在读取文件并调用大模型，请稍候…";
+      placeholderPanel.style.display = "block";
+      resultPanel.style.display = "none";
+      clearAnalysisResult();
+
+      try {
+        const res = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ instruction, directory: directoryEl.value }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          const d = data.detail;
+          throw new Error(typeof d === "string" ? d : "分析请求失败");
+        }
+        placeholderPanel.style.display = "none";
+        resultPanel.style.display = "block";
+        metaEl.innerHTML = `目录：<code>${data.directory}</code> · 已扫描 <strong>${data.files_scanned}</strong> 个文件`;
+        renderAnalysisResult(data);
+        if (data.file_list && data.file_list.length) {
+          filesBox.style.display = "block";
+          fileListEl.innerHTML = data.file_list.map(f => `<li><code>${f}</code></li>`).join("");
+        } else {
+          filesBox.style.display = "none";
+        }
+      } catch (e) {
+        statusEl.textContent = "";
+        placeholderPanel.style.display = "block";
+        showError(e.message || "未知错误");
+      } finally {
+        analyzeBtn.disabled = false;
+      }
+    };
+
+    voiceBtn.onclick = () => {
+      if (!ReportSpeech.isSpeechRecognitionSupported()) {
+        showError("当前浏览器不支持语音识别，请使用 Edge/Chrome。");
+        return;
+      }
+      if (speechController.isActive()) {
+        speechController.stop();
+        return;
+      }
+      showError("");
+      speechController.start(instructionEl.value);
+    };
+  </script>
+</body>
+</html>
