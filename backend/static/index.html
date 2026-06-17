@@ -46,6 +46,8 @@
     }
     .error { background: #451a1a; color: #fecaca; padding: 0.75rem; border-radius: 8px; margin-top: 0.75rem; }
     .muted { color: #9ca3af; }
+    .reasoning-title { color: #93c5fd; font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; }
+    .reasoning-text { max-height: 280px; overflow: auto; white-space: pre-wrap; line-height: 1.65; font-size: 0.9rem; color: #cbd5e1; }
     .meta { font-size: 0.85rem; color: #9ca3af; margin-bottom: 1rem; }
     details { margin-top: 1rem; font-size: 0.85rem; color: #9ca3af; }
     code { background: #0f1419; padding: 0.1rem 0.3rem; border-radius: 4px; }
@@ -63,6 +65,21 @@
     .chart-card h3 { margin: 0 0 0.75rem; font-size: 0.95rem; color: #e2e8f0; font-weight: 600; }
     .chart-wrap { position: relative; height: 220px; }
     #result { white-space: pre-wrap; line-height: 1.6; font-size: 0.92rem; color: #d1d5db; border-top: 1px solid #2d3a4f; padding-top: 1rem; }
+    #result.streaming::after {
+      content: "";
+      display: inline-block;
+      width: 0.55em;
+      height: 1em;
+      margin-left: 0.15em;
+      border-radius: 2px;
+      background: #93c5fd;
+      vertical-align: -0.15em;
+      animation: cursor-blink 1s ease-in-out infinite;
+    }
+    @keyframes cursor-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.25; }
+    }
     .detail-label { font-size: 0.85rem; color: #9ca3af; margin-bottom: 0.5rem; }
   </style>
 </head>
@@ -88,6 +105,11 @@
         <span class="voice-dot" aria-hidden="true"></span>
         <span id="voiceHintText"></span>
       </p>
+    </div>
+
+    <div class="panel" id="reasoningPanel" style="display:none">
+      <div class="reasoning-title">思考...</div>
+      <div class="reasoning-text" id="reasoningText"></div>
     </div>
 
     <div class="panel" id="resultPanel" style="display:none">
@@ -118,6 +140,8 @@
     const errorBox = document.getElementById("errorBox");
     const statusEl = document.getElementById("status");
     const resultPanel = document.getElementById("resultPanel");
+    const reasoningPanel = document.getElementById("reasoningPanel");
+    const reasoningText = document.getElementById("reasoningText");
     const placeholderPanel = document.getElementById("placeholderPanel");
     const metaEl = document.getElementById("meta");
     const filesBox = document.getElementById("filesBox");
@@ -160,6 +184,62 @@
       errorBox.style.display = msg ? "block" : "none";
     }
 
+    function parseSseBlock(block) {
+      const lines = block.split(/\r?\n/);
+      const eventLine = lines.find((line) => line.startsWith("event:"));
+      if (!eventLine) return null;
+      const event = eventLine.slice("event:".length).trim();
+      const dataText = lines
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice("data:".length).trimStart())
+        .join("\n");
+      try {
+        return { event, data: dataText ? JSON.parse(dataText) : {} };
+      } catch {
+        return { event: "error", data: { detail: "流式响应解析失败" } };
+      }
+    }
+
+    function handleStreamEvent(item) {
+      if (!item) return;
+      if (item.event === "reasoning_delta") {
+        reasoningPanel.style.display = "block";
+        reasoningText.textContent += item.data.text || "";
+        reasoningText.scrollTop = reasoningText.scrollHeight;
+        return;
+      }
+      if (item.event === "result") {
+        reasoningPanel.style.display = "none";
+        reasoningText.textContent = "";
+        placeholderPanel.style.display = "none";
+        resultPanel.style.display = "block";
+        metaEl.innerHTML = `目录：<code>${escapeHtml(item.data.directory)}</code> · 已扫描 <strong>${item.data.files_scanned}</strong> 个文件`;
+        renderAnalysisResult(item.data);
+        const resultEl = document.getElementById("result");
+        if (resultEl) resultEl.classList.add("streaming");
+        if (item.data.file_list && item.data.file_list.length) {
+          filesBox.style.display = "block";
+          fileListEl.innerHTML = item.data.file_list.map(f => `<li><code>${escapeHtml(f)}</code></li>`).join("");
+        } else {
+          filesBox.style.display = "none";
+        }
+        return;
+      }
+      if (item.event === "conclusion_delta") {
+        const resultEl = document.getElementById("result");
+        if (resultEl) resultEl.textContent += item.data.text || "";
+        return;
+      }
+      if (item.event === "done") {
+        const resultEl = document.getElementById("result");
+        if (resultEl) resultEl.classList.remove("streaming");
+        return;
+      }
+      if (item.event === "error") {
+        throw new Error(item.data.detail || "分析请求失败");
+      }
+    }
+
     analyzeBtn.onclick = async () => {
       const instruction = instructionEl.value.trim();
       if (!instruction) { showError("请输入或通过语音说出分析指令。"); return; }
@@ -168,34 +248,44 @@
       statusEl.textContent = "正在读取文件并调用大模型，请稍候…";
       placeholderPanel.style.display = "block";
       resultPanel.style.display = "none";
+      reasoningPanel.style.display = "none";
+      reasoningText.textContent = "";
       clearAnalysisResult();
 
       try {
-        const res = await fetch("/api/analyze", {
+        const res = await fetch("/api/analyze/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ instruction, directory: directoryEl.value }),
         });
-        const data = await res.json();
         if (!res.ok) {
+          const data = await res.json();
           const d = data.detail;
           throw new Error(typeof d === "string" ? d : "分析请求失败");
         }
-        placeholderPanel.style.display = "none";
-        resultPanel.style.display = "block";
-        metaEl.innerHTML = `目录：<code>${data.directory}</code> · 已扫描 <strong>${data.files_scanned}</strong> 个文件`;
-        renderAnalysisResult(data);
-        if (data.file_list && data.file_list.length) {
-          filesBox.style.display = "block";
-          fileListEl.innerHTML = data.file_list.map(f => `<li><code>${f}</code></li>`).join("");
-        } else {
-          filesBox.style.display = "none";
+        if (!res.body) throw new Error("当前浏览器不支持流式响应读取。");
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let done = false;
+        while (!done) {
+          const chunk = await reader.read();
+          done = chunk.done;
+          buffer += decoder.decode(chunk.value || new Uint8Array(), { stream: !done });
+          const blocks = buffer.split(/\n\n|\r\n\r\n/);
+          buffer = blocks.pop() || "";
+          blocks.forEach((block) => handleStreamEvent(parseSseBlock(block)));
         }
+        handleStreamEvent(parseSseBlock(buffer));
       } catch (e) {
         statusEl.textContent = "";
         placeholderPanel.style.display = "block";
+        reasoningPanel.style.display = "none";
         showError(e.message || "未知错误");
       } finally {
+        const resultEl = document.getElementById("result");
+        if (resultEl) resultEl.classList.remove("streaming");
         analyzeBtn.disabled = false;
       }
     };

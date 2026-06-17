@@ -35,6 +35,38 @@ def _extract_json_blob(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).strip()
+    if not text:
+        return default
+
+    normalized = (
+        text.replace(",", "")
+        .replace("，", "")
+        .replace("％", "%")
+        .replace("﹪", "%")
+    )
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", normalized)
+    if not match:
+        return default
+
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return default
+
+
+def _coerce_int(value: Any, default: int = 0) -> int:
+    return int(round(_coerce_float(value, float(default))))
+
+
 def _normalize_chart(raw: dict[str, Any], index: int) -> dict[str, Any] | None:
     chart_type = str(raw.get("type", "bar")).lower()
     if chart_type not in ("bar", "doughnut", "pie", "line"):
@@ -45,7 +77,7 @@ def _normalize_chart(raw: dict[str, Any], index: int) -> dict[str, Any] | None:
     if not isinstance(labels, list) or not isinstance(values, list):
         return None
     labels = [str(x) for x in labels]
-    values = [float(v) if v is not None else 0 for v in values]
+    values = [_coerce_float(v) for v in values]
     if not labels or len(labels) != len(values):
         return None
 
@@ -60,17 +92,17 @@ def _normalize_chart(raw: dict[str, Any], index: int) -> dict[str, Any] | None:
 
 
 def _normalize_metrics(raw: dict[str, Any] | None, file_count: int) -> dict[str, Any]:
-    raw = raw or {}
-    passed = int(raw.get("passed") or raw.get("passed_count") or 0)
-    failed = int(raw.get("failed") or raw.get("failed_count") or 0)
-    total_tests = int(raw.get("total_tests") or (passed + failed) or 0)
+    raw = raw if isinstance(raw, dict) else {}
+    passed = _coerce_int(raw.get("passed") or raw.get("passed_count"))
+    failed = _coerce_int(raw.get("failed") or raw.get("failed_count"))
+    total_tests = _coerce_int(raw.get("total_tests"), passed + failed)
     pass_rate = raw.get("pass_rate_percent")
     if pass_rate is None and total_tests > 0:
         pass_rate = round(100.0 * passed / total_tests, 1)
-    pass_rate = float(pass_rate or 0)
+    pass_rate = _coerce_float(pass_rate)
 
     return {
-        "total_files": int(raw.get("total_files") or file_count),
+        "total_files": _coerce_int(raw.get("total_files"), file_count),
         "total_tests": total_tests,
         "passed": passed,
         "failed": failed,

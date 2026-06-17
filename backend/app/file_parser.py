@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
 
@@ -10,6 +11,12 @@ from docx import Document
 from openpyxl import load_workbook
 
 SUPPORTED_SUFFIXES = {".txt", ".md", ".csv", ".json", ".log", ".pdf", ".docx", ".xlsx", ".xls"}
+
+
+@dataclass(frozen=True)
+class ExtractResult:
+    text: str
+    error: str | None = None
 
 
 def _read_text_file(path: Path, max_chars: int) -> str:
@@ -83,6 +90,24 @@ def extract_text(path: Path, max_chars: int) -> str:
             return "(.xls 格式请先转换为 .xlsx 后分析)"
         return _read_xlsx(path, max_chars)
     return ""
+
+
+def safe_extract_text(path: Path, max_chars: int) -> ExtractResult:
+    try:
+        text = extract_text(path, max_chars)
+    except Exception as e:
+        return ExtractResult(
+            text=f"(文件解析失败，已跳过正文提取: {type(e).__name__}: {e})",
+            error=f"{path.name}: {type(e).__name__}: {e}",
+        )
+
+    if not text.strip():
+        return ExtractResult(
+            text="(未能提取文本，可能为扫描件、空文件或暂不支持的格式)",
+            error=f"{path.name}: 未能提取文本",
+        )
+
+    return ExtractResult(text=text)
 
 
 def list_report_files(directory: Path, max_files: int) -> list[Path]:

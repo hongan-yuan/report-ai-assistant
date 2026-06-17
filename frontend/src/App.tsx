@@ -11,10 +11,44 @@ type AnalyzeResult = {
   files_scanned: number;
   directory: string;
   file_list: string[];
+  parse_errors?: string[];
 };
 
 const EXAMPLE =
   "分析 D:\\TestReport 下所有检测文件，找出与「某某客户」相关的检测报告，汇总检测项目与通过率，并列出不合格项。";
+
+type StreamEvent =
+  | { event: "reasoning_delta"; data: { text?: string } }
+  | { event: "result"; data: AnalyzeResult }
+  | { event: "conclusion_delta"; data: { text?: string } }
+  | { event: "error"; data: { detail?: string } }
+  | { event: "done"; data: Record<string, never> }
+  | { event: "unknown"; data: Record<string, unknown> };
+
+function parseSseBlock(block: string): StreamEvent | null {
+  const lines = block.split(/\r?\n/);
+  const event = lines
+    .find((line) => line.startsWith("event:"))
+    ?.slice("event:".length)
+    .trim();
+  const dataText = lines
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trimStart())
+    .join("\n");
+  if (!event) return null;
+
+  try {
+    const data = dataText ? JSON.parse(dataText) : {};
+    if (event === "reasoning_delta") return { event, data };
+    if (event === "result") return { event, data };
+    if (event === "conclusion_delta") return { event, data };
+    if (event === "error") return { event, data };
+    if (event === "done") return { event, data };
+    return { event: "unknown", data };
+  } catch {
+    return { event: "error", data: { detail: "流式响应解析失败" } };
+  }
+}
 
 export default function App() {
   const [directory, setDirectory] = useState("D:\\TestReport");
@@ -22,6 +56,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalyzeResult | null>(null);
+  const [reasoningText, setReasoningText] = useState("");
 
   const {
     toggleVoice,
@@ -50,14 +85,15 @@ export default function App() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setReasoningText("");
     try {
-      const res = await fetch("/api/analyze", {
+      const res = await fetch("/api/analyze/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ instruction: text, directory }),
       });
-      const data = await res.json();
       if (!res.ok) {
+        const data = await res.json();
         const detail = data.detail;
         const msg =
           typeof detail === "string"
@@ -67,7 +103,53 @@ export default function App() {
               : "分析请求失败";
         throw new Error(msg);
       }
-      setResult(data as AnalyzeResult);
+      if (!res.body) {
+        throw new Error("当前浏览器不支持流式响应读取。");
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const handleStreamEvent = (streamEvent: StreamEvent | null) => {
+        if (!streamEvent) return;
+
+        if (streamEvent.event === "reasoning_delta") {
+          const delta = streamEvent.data.text ?? "";
+          if (delta) setReasoningText((prev) => prev + delta);
+        } else if (streamEvent.event === "result") {
+          setReasoningText("");
+          setResult(streamEvent.data);
+        } else if (streamEvent.event === "conclusion_delta") {
+          const delta = streamEvent.data.text ?? "";
+          if (delta) {
+            setResult((prev) =>
+              prev ? { ...prev, conclusion: `${prev.conclusion}${delta}` } : prev,
+            );
+          }
+        } else if (streamEvent.event === "error") {
+          throw new Error(streamEvent.data.detail || "分析请求失败");
+        }
+      };
+
+      try {
+        let done = false;
+        while (!done) {
+          const chunk = await reader.read();
+          done = chunk.done;
+          buffer += decoder.decode(chunk.value ?? new Uint8Array(), {
+            stream: !done,
+          });
+          const blocks = buffer.split(/\n\n|\r\n\r\n/);
+          buffer = blocks.pop() ?? "";
+
+          for (const block of blocks) {
+            handleStreamEvent(parseSseBlock(block));
+          }
+        }
+        handleStreamEvent(parseSseBlock(buffer));
+      } finally {
+        reader.releaseLock();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "未知错误");
     } finally {
@@ -153,7 +235,15 @@ export default function App() {
 
         <section className="panel result-panel">
           <h2>分析结论</h2>
-          {loading && <p className="muted">正在读取文件并调用大模型，请稍候…</p>}
+          {loading && !result && !reasoningText && (
+            <p className="muted">正在读取文件并调用大模型，请稍候…</p>
+          )}
+          {loading && !result && reasoningText && (
+            <div className="reasoning-panel">
+              <div className="reasoning-title">思考...</div>
+              <div className="reasoning-text">{reasoningText}</div>
+            </div>
+          )}
           {!loading && !result && !error && (
             <p className="muted">提交指令后，结论将显示在此处。</p>
           )}
@@ -171,6 +261,7 @@ export default function App() {
               )}
               <div className="markdown">
                 <ReactMarkdown>{result.conclusion}</ReactMarkdown>
+                {loading && <span className="streaming-cursor" aria-hidden="true" />}
               </div>
               {result.file_list.length > 0 && (
                 <details className="files">

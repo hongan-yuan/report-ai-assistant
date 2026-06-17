@@ -162,6 +162,50 @@
   color: #9ca3af;
 }
 
+.reasoning-panel {
+  border: 1px solid #374151;
+  border-radius: 8px;
+  background: #0f1419;
+  padding: 0.85rem;
+  color: #cbd5e1;
+}
+
+.reasoning-title {
+  color: #93c5fd;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.reasoning-text {
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  line-height: 1.65;
+  font-size: 0.9rem;
+}
+
+.streaming-cursor {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  margin-left: 0.15em;
+  border-radius: 2px;
+  background: #93c5fd;
+  vertical-align: -0.15em;
+  animation: cursor-blink 1s ease-in-out infinite;
+}
+
+@keyframes cursor-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
 .meta {
   font-size: 0.85rem;
   color: #9ca3af;

@@ -1,0 +1,8 @@
+vllm serve Model/Qwen3.6-35B-A3B \
+  --host 0.0.0.0 \
+  --port 8001 \
+  --served-model-name Model/Qwen3.6-35B-A3B \
+  --enable-reasoning \
+  --reasoning-parser qwen3 \
+  --tensor-parallel-size 4 \
+  --max-model-len 262144
